@@ -16,29 +16,17 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))
 bot = Bot(token=TOKEN)
 groq_client = Groq(api_key=GROQ_API_KEY)
 app = Flask(__name__)
-application = Application.builder().token(TOKEN).build()
-
 user_data = {}
 
-# Головна сторінка
-@app.route('/')
-def index():
-    return "✅ Бот працює!"
+# Telegram Application — глобальна
+application: Application = Application.builder().token(TOKEN).build()
 
-# Webhook від Telegram
-@app.route(f"/webhook/{TOKEN}", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    asyncio.run(application.process_update(update))
-    return "ok"
-
-# /start
+# Хендлери
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_data[user_id] = {"lang": "uk"}
     await update.message.reply_text("Привіт! Напиши мені щось!")
 
-# Обробка повідомлень
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     message = update.message.text
@@ -61,15 +49,26 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Помилка: {e}")
 
-# Додаємо хендлери
-application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+# Flask routes
+@app.route('/')
+def index():
+    return "✅ Бот працює!"
 
-# Запуск сервера + установка webhook
+@app.route(f"/webhook/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    asyncio.create_task(application.process_update(update))
+    return "ok"
+
+# Ініціалізація застосунку
+async def run_bot():
+    await bot.delete_webhook()
+    await bot.set_webhook(url=f"https://tgbotai2-seui.onrender.com/webhook/{TOKEN}")
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    await application.initialize()  # <-- важливо
+    await application.start()       # <-- запускає dispatcher
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 if __name__ == "__main__":
-    async def setup():
-        await bot.delete_webhook()
-        await bot.set_webhook(url=f"https://tgbotai2-seui.onrender.com/webhook/{TOKEN}")
-        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
-    asyncio.run(setup())
+    asyncio.run(run_bot())
