@@ -1,61 +1,46 @@
 import os
-import logging
+from flask import Flask, request
+from telegram import Update, Bot
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext._webhookserver import WebhookServer
+
 from groq import Groq
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    filters, ContextTypes, ConversationHandler
-)
 
-# Logging
-logging.basicConfig(level=logging.INFO)
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))
 
-# Groq API
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+bot = Bot(token=TOKEN)
+groq_client = Groq(api_key=GROQ_API_KEY)
+app = Flask(__name__)
+application = Application.builder().token(TOKEN).build()
 
-# Ключі для вибору мови
-LANGUAGE, CHAT = range(2)
+user_data = {}
 
-# Створюємо кнопки
-language_keyboard = ReplyKeyboardMarkup(
-    [["🇺🇦 Українська", "🇷🇺 Русский", "🇬🇧 English"]],
-    one_time_keyboard=True,
-    resize_keyboard=True
-)
+@app.route('/')
+def index():
+    return "✅ Бот працює!"
 
-# Вибір мови
+@app.route(f"/webhook/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    application.process_update(update)
+    return "ok"
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Привіт! Обери мову для спілкування:",
-        reply_markup=language_keyboard
-    )
-    return LANGUAGE
+    user_id = update.effective_user.id
+    user_data[user_id] = {"lang": "uk"}
+    await update.message.reply_text("Привіт! Напиши мені щось!")
 
-# Зберігаємо мову
-async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lang = update.message.text
-    if "Українська" in lang:
-        context.user_data["lang"] = "uk"
-    elif "Русский" in lang:
-        context.user_data["lang"] = "ru"
-    elif "English" in lang:
-        context.user_data["lang"] = "en"
-    else:
-        await update.message.reply_text("Будь ласка, обери мову з кнопок.")
-        return LANGUAGE
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    message = update.message.text
 
-    await update.message.reply_text("Мову встановлено ✅", reply_markup=ReplyKeyboardRemove())
-    return CHAT
-
-# Відповідь AI
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    lang = context.user_data.get("lang", "uk")  # за замовчуванням — укр
-
+    lang = user_data.get(user_id, {}).get("lang", "uk")
     prompt = {
-        "uk": f"Відповідай українською: {user_message}",
-        "ru": f"Отвечай по-русски: {user_message}",
-        "en": f"Answer in English: {user_message}",
+        "uk": f"Відповідай українською: {message}",
+        "ru": f"Отвечай по-русски: {message}",
+        "en": f"Answer in English: {message}",
     }[lang]
 
     try:
@@ -65,27 +50,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             temperature=0.7,
             max_tokens=150
         )
-        reply = response.choices[0].message.content
-        await update.message.reply_text(reply)
+        await update.message.reply_text(response.choices[0].message.content)
     except Exception as e:
-        await update.message.reply_text(f"Помилка: {e}")
+        await update.message.reply_text(f"❌ Помилка: {e}")
 
-# Запуск
-def main():
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    app = ApplicationBuilder().token(token).build()
+# Додай хендлери
+application.add_handler(CommandHandler("start", start))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            LANGUAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_language)],
-            CHAT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)]
-        },
-        fallbacks=[CommandHandler("start", start)],
-    )
-
-    app.add_handler(conv_handler)
-    app.run_polling()
-
+# Запуск Flask-сервера
 if __name__ == "__main__":
-    main()
+    # Установка webhook при запуску
+    bot.delete_webhook()
+    bot.set_webhook(url=f"https://tgbotai2-seui.onrender.com/webhook/{TOKEN}")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
