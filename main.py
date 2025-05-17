@@ -20,19 +20,19 @@ application = Application.builder().token(TOKEN).build()
 
 user_data = {}
 
-# Головна сторінка (перевірка статусу)
+# Головна сторінка
 @app.route('/')
 def index():
     return "✅ Бот працює!"
 
-# Webhook для Telegram
+# Webhook від Telegram
 @app.route(f"/webhook/{TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), bot)
-    application.process_update(update)
+    asyncio.run(application.process_update(update))
     return "ok"
 
-# Команда /start
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_data[user_id] = {"lang": "uk"}
@@ -65,7 +65,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-# Запуск сервера + встановлення webhook
+# Запуск сервера + установка webhook
 if __name__ == "__main__":
     async def setup():
         await bot.delete_webhook()
